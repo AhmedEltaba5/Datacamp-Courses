@@ -510,20 +510,85 @@ for doc in db.prizes.aggregate(pipeline):
 
 ======================================================================
 
+key_ac = "prizes.affiliations.country"
+key_bc = "bornCountry"
+pipeline = [
+    {"$project": {key_bc: 1, key_ac: 1}},
 
+    # Ensure a single prize affiliation country per pipeline document
+    {"$unwind": "$prizes"},
+    {"$unwind": "$prizes.affiliations"},
 
+    # Ensure values in the list of distinct values (so not empty)
+    {"$match": {key_ac: {"$in": db.laureates.distinct(key_ac)}}},
+    {"$project": {"affilCountrySameAsBorn": {
+        "$gte": [{"$indexOfBytes": ["$"+key_ac, "$"+key_bc]}, 0]}}},
 
+    # Count by "$affilCountrySameAsBorn" value (True or False)
+    {"$group": {"_id": "$affilCountrySameAsBorn",
+                "count": {"$sum": 1}}},
+]
+for doc in db.laureates.aggregate(pipeline): print(doc)
 
+====================================================================
 
+pipeline = [
+    # Unwind the laureates array
+    {"$unwind": "$laureates"},
+    {"$lookup": {
+        "from": "laureates", "foreignField": "id",
+        "localField": "laureates.id", "as": "laureate_bios"}},
 
+    # Unwind the new laureate_bios array
+    {"$unwind": "$laureate_bios"},
+    {"$project": {"category": 1,
+                  "bornCountry": "$laureate_bios.bornCountry"}},
 
+    # Collect bornCountry values associated with each prize category
+    {"$group": {"_id": "$category",
+                "bornCountries": {"$addToSet": "$bornCountry"}}},
 
+    # Project out the size of each category's (set of) bornCountries
+    {"$project": {"category": 1,
+                  "nBornCountries": {"$size": "$bornCountries"}}},
+    {"$sort": {"nBornCountries": -1}},
+]
+for doc in db.prizes.aggregate(pipeline): print(doc)
 
+===================================================================
 
+pipeline = [
+    # Limit results to people; project needed fields; unwind prizes
+    {"$match": {"gender": {"$ne": "org"}}},
+    {"$project": {"bornCountry": 1, "prizes.affiliations.country": 1}},
+    {"$unwind": "$prizes"},
+  
+    # Count prizes with no country-of-birth affiliation
+    {"$addFields": {"bornCountryInAffiliations": {"$in": ["$bornCountry", "$prizes.affiliations.country"]}}},
+    {"$match": {"bornCountryInAffiliations": False}},
+    {"$count": "awardedElsewhere"},
+]
 
+print(list(db.laureates.aggregate(pipeline)))
 
+===================================================================
 
+pipeline = [
+    {"$match": {"gender": {"$ne": "org"}}},
+    {"$project": {"bornCountry": 1, "prizes.affiliations.country": 1}},
+    {"$unwind": "$prizes"},
+    {"$addFields": {"bornCountryInAffiliations": {"$in": ["$bornCountry", "$prizes.affiliations.country"]}}},
+    {"$match": {"bornCountryInAffiliations": False}},
+    {"$count": "awardedElsewhere"},
+]
 
+# Construct the additional filter stage
+added_stage = {"$match": {"prizes.affiliations.country": {"$in": db.laureates.distinct("prizes.affiliations.country")}}}
 
+# Insert this stage into the pipeline
+pipeline.insert(3, added_stage)
+print(list(db.laureates.aggregate(pipeline)))
+
+====================================================================
 
 
